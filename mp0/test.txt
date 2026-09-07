@@ -1,0 +1,3 @@
+Hello from the ECE 438 server!
+This is a test file being sent over the socket.
+Line three of the test content.
