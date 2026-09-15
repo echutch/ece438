@@ -19,6 +19,8 @@
 
 #define BACKLOG 10	 // how many pending connections queue will hold
 
+#define MAXDATASIZE 100 // max number of bytes we can get at once 
+
 void sigchld_handler(int s)
 {
 	while(waitpid(-1, NULL, WNOHANG) > 0);
@@ -34,7 +36,24 @@ void *get_in_addr(struct sockaddr *sa)
 	return &(((struct sockaddr_in6*)sa)->sin6_addr);
 }
 
-int main(void)
+void get_handler(int new_fd) {
+	// int numbytes, total_size;
+	int numbytes;
+	char buf[MAXDATASIZE];
+	// char* resp = NULL;
+
+	if ((numbytes = recv(new_fd, buf, MAXDATASIZE-1, 0)) == -1) {
+		perror("recv");
+		exit(1);
+	}
+
+	printf("%s\n", buf);
+
+	if (send(new_fd, "Hello, world!", 13, 0) == -1)
+		perror("send");
+}
+
+int main(int argc, char *argv[])
 {
 	int sockfd, new_fd;  // listen on sock_fd, new connection on new_fd
 	struct addrinfo hints, *servinfo, *p;
@@ -45,12 +64,19 @@ int main(void)
 	char s[INET6_ADDRSTRLEN];
 	int rv;
 
+	if (argc != 2) {
+		fprintf(stderr, "usage: ./http_server port");
+		exit(1);
+	}
+
+	char* port = argv[1];
+
 	memset(&hints, 0, sizeof hints);
 	hints.ai_family = AF_UNSPEC;
 	hints.ai_socktype = SOCK_STREAM;
 	hints.ai_flags = AI_PASSIVE; // use my IP
 
-	if ((rv = getaddrinfo(NULL, PORT, &hints, &servinfo)) != 0) {
+	if ((rv = getaddrinfo(NULL, port, &hints, &servinfo)) != 0) {
 		fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(rv));
 		return 1;
 	}
@@ -115,8 +141,9 @@ int main(void)
 
 		if (!fork()) { // this is the child process
 			close(sockfd); // child doesn't need the listener
-			if (send(new_fd, "Hello, world!", 13, 0) == -1)
-				perror("send");
+			// if (send(new_fd, "Hello, world!", 13, 0) == -1)
+			// 	perror("send");
+			get_handler(new_fd);
 			close(new_fd);
 			exit(0);
 		}

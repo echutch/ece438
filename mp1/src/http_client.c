@@ -84,7 +84,7 @@ int main(int argc, char *argv[])
 		exit(1);
 	}
 
-	strncpy(path, first_slash + 1, sizeof(path) - 1);
+	strncpy(path, first_slash, sizeof(path) - 1);
 
 	printf("hostname: %s\n", hostname);
 	printf("port: %s\n", port);
@@ -127,40 +127,48 @@ int main(int argc, char *argv[])
 
 	freeaddrinfo(servinfo); // all done with this structure
 
+	char get_req[MAXDATASIZE];
+	int req_size = snprintf(get_req, sizeof(get_req), "GET %s HTTP/1.1\r\n\r\n", path);
+	if (send(sockfd, get_req, req_size, 0) == -1) {
+		printf("reached\n");
+		perror("send");
+		close(sockfd);
+		exit(0);
+	}
+
+
 	// if ((numbytes = recv(sockfd, buf, MAXDATASIZE-1, 0)) == -1) {
 	//     perror("recv");
 	//     exit(1);
 	// }
 
-	size_t total_size = 0;
+	int total_size = 0;
 	char* resp = NULL;
 
-	while ((numbytes = recv(sockfd, buf, MAXDATASIZE, 0)) > 0) {
+	while ((numbytes = recv(sockfd, buf, MAXDATASIZE-1, 0)) > 0) {
 		resp = realloc(resp, total_size + numbytes);
 		memcpy(resp + total_size, buf, numbytes);
 		total_size += numbytes;
 	}
 	close(sockfd);
 
-	// buf[numbytes] = '\0';
+	printf("%s\n", resp);
 
-	// printf("client: received '%s'\n",buf);
+	// // split into header and body
+	// char* end_header = NULL;
+	// for (size_t i = 0; i + 3 < total_size; i++) {
+	// 	if (resp[i] == '\r' && resp[i+1] == '\n' &&
+	// 		resp[i+2] == '\r' && resp[i+3] == '\n') {
+	// 			end_header = resp + i + 4;
+	// 			break;
+	// 		}
+	// }
 
-	// split into header and body
-	char* end_header = NULL;
-	for (size_t i = 0; i + 3 < total_size; i++) {
-		if (resp[i] == '\r' && resp[i+1] == '\n' &&
-			resp[i+2] == '\r' && resp[i+3] == '\n') {
-				end_header = resp + i + 4;
-				break;
-			}
-	}
-
-	// writeback to output
-	size_t body_len = total_size - (end_header - resp);
-	FILE* output = fopen("output", "wb");
-	fwrite(end_header, 1, body_len, output);
-	fclose(output);
+	// // writeback to output
+	// size_t body_len = total_size - (end_header - resp);
+	// FILE* output = fopen("output", "wb");
+	// fwrite(end_header, 1, body_len, output);
+	// fclose(output);
 
 	return 0;
 }
