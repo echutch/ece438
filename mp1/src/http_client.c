@@ -152,23 +152,23 @@ int main(int argc, char *argv[])
 	}
 	close(sockfd);
 
-	printf("%s\n", resp);
+	// split into header and body
+	char* end_header = NULL;
+	for (int i = 0; i + 3 < total_size; i++) {
+		if (resp[i] == '\r' && resp[i+1] == '\n' &&
+			resp[i+2] == '\r' && resp[i+3] == '\n') {
+				end_header = resp + i + 4;
+				break;
+			}
+	}
 
-	// // split into header and body
-	// char* end_header = NULL;
-	// for (size_t i = 0; i + 3 < total_size; i++) {
-	// 	if (resp[i] == '\r' && resp[i+1] == '\n' &&
-	// 		resp[i+2] == '\r' && resp[i+3] == '\n') {
-	// 			end_header = resp + i + 4;
-	// 			break;
-	// 		}
-	// }
-
-	// // writeback to output
-	// size_t body_len = total_size - (end_header - resp);
-	// FILE* output = fopen("output", "wb");
-	// fwrite(end_header, 1, body_len, output);
-	// fclose(output);
+	// writeback to output
+	if (end_header != NULL) {
+		size_t body_len = total_size - (end_header - resp);
+		FILE* output = fopen("output", "wb");
+		fwrite(end_header, 1, body_len, output);
+		fclose(output);
+	}
 
 	return 0;
 }

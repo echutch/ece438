@@ -19,10 +19,11 @@
 
 #define BACKLOG 10	 // how many pending connections queue will hold
 
-#define MAXDATASIZE 100 // max number of bytes we can get at once 
+#define MAXDATASIZE 500 // max number of bytes we can get at once 
 
 void sigchld_handler(int s)
 {
+	(void)s;
 	while(waitpid(-1, NULL, WNOHANG) > 0);
 }
 
@@ -36,6 +37,19 @@ void *get_in_addr(struct sockaddr *sa)
 	return &(((struct sockaddr_in6*)sa)->sin6_addr);
 }
 
+int send_fd(int fd, const char *buf, size_t len) {
+	size_t total_sent = 0;
+	while (total_sent < len) {
+		ssize_t n = send(fd, buf + total_sent, len - total_sent, 0);
+		if (n == -1) {
+			perror("send");
+			return -1;
+		}
+		total_sent += n;
+	}
+	return 0;
+}
+
 void get_handler(int new_fd) {
 	// int numbytes, total_size;
 	int numbytes;
@@ -44,13 +58,53 @@ void get_handler(int new_fd) {
 
 	if ((numbytes = recv(new_fd, buf, MAXDATASIZE-1, 0)) == -1) {
 		perror("recv");
-		exit(1);
+		return;
 	}
+	buf[numbytes] = '\0';
 
 	printf("%s\n", buf);
 
-	if (send(new_fd, "Hello, world!", 13, 0) == -1)
-		perror("send");
+	char path[MAXDATASIZE];
+	char *start = buf + 4; // skip "GET " (with space)
+	char *end = strchr(start, ' ');
+	size_t path_length = end - start;
+
+	memcpy(path, start, path_length);
+	path[path_length] = '\0';
+
+	char *filename = path + 1;
+
+	if (access(filename, F_OK) == -1) {
+		// if path doesn't exist, return 404
+		const char *header = "HTTP/1.1 404 Not Found\r\n\r\n";
+		send_fd(new_fd, header, strlen(header));
+		return;
+	}
+
+	FILE *file = fopen(filename, "rb");
+	if (file == NULL) {
+		perror("fopen");
+		// can't be opened (or anything else), return 400
+		const char *header = "HTTP/1.1 400 Bad Request\r\n\r\n";
+		send_fd(new_fd, header, strlen(header));
+		return;
+	}
+
+	const char *header = "HTTP/1.1 200 OK\r\n\r\n";
+	if (send_fd(new_fd, header, strlen(header)) == -1) {
+		fclose(file);
+		return;
+	}
+
+	char filebuf[4096];
+	size_t n;
+	while ((n = fread(filebuf, 1, sizeof(filebuf), file)) > 0) {
+		if (send_fd(new_fd, filebuf, n) == -1) {
+			break;
+		}
+	}
+
+	fclose(file);
 }
 
 int main(int argc, char *argv[])
