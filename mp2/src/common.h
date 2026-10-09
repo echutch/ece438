@@ -36,8 +36,8 @@ typedef struct __attribute__((packed)) {
     uint32_t ack;
 } hdr_t;
 
-#define MAX_PAYLOAD (1472 - HDR_SIZE)
-// 1472B payload won't be fragmented by UDP
+#define MAX_PAYLOAD (1472 - HDR_SIZE) // MSS
+// 1472B payload won't be fragmented by UDP`
 
 typedef struct {
     hdr_t h;

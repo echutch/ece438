@@ -42,6 +42,30 @@ static void send_ctrl(uint16_t type, uint32_t seq, uint32_t ack) {
         diep("sendto");
 }
 
+// send a single packet
+static void send_data(FILE *fp, uint32_t idx, unsigned long long total) {
+    packet_t p;
+    unsigned long long offset = (unsigned long long)idx * MAX_PAYLOAD;
+    size_t want;
+
+    if (total - offset < MAX_PAYLOAD) {
+        want = (size_t)(total - offset);
+    } else {
+        want = MAX_PAYLOAD;
+    }
+
+    fseeko(fp, offset, SEEK_SET);
+    size_t n = fread(p.payload, 1, want, fp);
+
+    p.h.type = DATA;
+    p.h.seq = idx;
+    p.h.ack = 0;
+    p.h.len = n;
+
+    if (sendto(s, &p, sizeof(hdr_t) + n, 0, (struct sockaddr*)&si_other, slen) == -1)
+        diep("sendto");
+}
+
 #define RTO_MS 200
 
 // using a constant timeout, just keep sending until handshake is complete
@@ -120,7 +144,7 @@ void reliablyTransfer(char* hostname, unsigned short int hostUDPport, char* file
 
 
     /* Vars
-        - seq: byte sequence number, identify payloads
+        - seq (base/next): byte sequence number, identify payloads
         - CW: congestion window, number of bytes to send per seq
         - SST: slow start threshold, when CW >= SST transition to AIMD from slow start
         - state: slow start, AIMD, or fast recovery - determines CW, DupACK 
@@ -136,27 +160,37 @@ void reliablyTransfer(char* hostname, unsigned short int hostUDPport, char* file
 
     /* 2. Start transmitting and receiving ACKs*/
 
-    /* Init:
-                CW = 1
-                SST = 64
-                DupACK = 0
-    */
+    // integer ceiling division to get total packet count
+    uint32_t total_pkts = ((bytesToTransfer + MAX_PAYLOAD - 1) / MAX_PAYLOAD);  
+    
+    uint32_t base = 0; // start of window
+    uint32_t next = 0; // current packet sent in window
 
-    uint32_t seq = 0;
     uint32_t cwnd = 1;
     uint32_t sst = 64;
     uint16_t dupack = 0;
     uint16_t state = SS;
 
-    
+    struct pollfd pfd = {.fd = s, .events = POLLIN};
+
+
     // TODO: main handler here
 
-    // send: send packets of size CW - this will be updated by the receiving end
+    while (base < total_pkts) {
+        // send: send cwnd packets - this will be acked by the receiving end
+        while (next < total_pkts && next < base + cwnd) {
+            send_data(fp, next, bytesToTransfer);
+            next++;
+        }
 
-    // receive: receive ACKS, update state
+        // poll until timeout or ACK received
+
+
+         // receive: receive ACKS, update state
     // ACK or timeout will update TCP state machine
+    }
 
-    /* 3. Teardown*/
+    /* 3. Teardown */
     handshake(1);
 
 
