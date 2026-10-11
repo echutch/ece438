@@ -44,3 +44,6 @@ typedef struct {
     uint8_t payload[MAX_PAYLOAD];
 } packet_t;
 
+#define RWND 4096
+// want RWND >> CWND, may need to try different values if CWND grows too large
+

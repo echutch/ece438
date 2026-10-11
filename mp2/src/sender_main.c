@@ -172,22 +172,52 @@ void reliablyTransfer(char* hostname, unsigned short int hostUDPport, char* file
     uint16_t state = SS;
 
     struct pollfd pfd = {.fd = s, .events = POLLIN};
-
-
-    // TODO: main handler here
+    long timer_start = curr_ms();
 
     while (base < total_pkts) {
         // send: send cwnd packets - this will be acked by the receiving end
         while (next < total_pkts && next < base + cwnd) {
+            if (base == next){
+                timer_start = curr_ms();
+            }
             send_data(fp, next, bytesToTransfer);
             next++;
         }
 
         // poll until timeout or ACK received
+        long remaining = RTO_MS - (curr_ms() - timer_start);
+        int ready = 0;
+        if (remaining > 0)
+            ready = poll(&pfd, 1, remaining);
+        
+        if (ready < 0)
+            diep("poll");
+        
+        if (ready == 0) {
+            // TODO: timeout in any state transitions to slow start
+        }
 
+        // receive: receive ACKS, update state
+        // ACK or timeout will update TCP congestion state machine
+        hdr_t in;
+        ssize_t r = recvfrom(s, &in, sizeof(in), 0, NULL, NULL);
+        
+        // error/valid check
+        if (r < sizeof(in) || in.type != ACK)
+            continue;
 
-         // receive: receive ACKS, update state
-    // ACK or timeout will update TCP state machine
+        if (in.ack > base) {
+            // new ACK
+            base = in.ack;
+            dupack = 0;
+            timer_start = curr_ms();
+
+            // TODO: state transitions
+        } else if (in.ack == base) {
+            // dupACK
+
+            // TODO state transitions
+        }
     }
 
     /* 3. Teardown */

@@ -20,6 +20,10 @@
 struct sockaddr_in si_me, si_other;
 int s, slen;
 
+static uint8_t buffer[RWND][MAX_PAYLOAD]; // buffered packet payload
+static uint8_t buf_len[RWND]; // buffered packet length
+static uint8_t is_buffered[RWND]; // idx with seq % RWND, this gives O(1) buffer check
+
 static void send_ctrl(uint16_t type, uint32_t seq, uint32_t ack) {
     hdr_t h;
     h.type = type;
@@ -30,6 +34,9 @@ static void send_ctrl(uint16_t type, uint32_t seq, uint32_t ack) {
     if (sendto(s, &h, sizeof(h), 0, (struct sockaddr*)&si_other, slen) == -1)
         diep("sendto");
 }
+
+// handshake state
+enum { WAIT_SYN, CONNECTED, CLOSING };
 
 
 void reliablyReceive(unsigned short int myUDPport, char* destinationFile) {
@@ -60,15 +67,17 @@ void reliablyReceive(unsigned short int myUDPport, char* destinationFile) {
     packet_t in;
     socklen_t addrlen;
 
-    char fin = 0;
+    int rstate = WAIT_SYN;
 
     while (1) {
         addrlen = sizeof(si_other);
         ssize_t r = recvfrom(s, &in, sizeof(in), 0, (struct sockaddr*)&si_other, &addrlen);
+        if (r < sizeof(hdr_t))
+            continue;
 
         uint16_t type = in.h.type;
 
-        if (type == DATA) {
+        if (type == DATA && rstate == CONNECTED) {
             // TODO: main handler here
 
             // will need a buffer for receiving out of order packets - need to decide on size (rwnd - flow control window) 
@@ -77,18 +86,33 @@ void reliablyReceive(unsigned short int myUDPport, char* destinationFile) {
             // else if packet arrived early hold in buffer until seq number matches
 
             // send next_seq ack to sender
+
+            uint32_t seq = in.h.seq;
+            if (seq == next_seq) {
+                // next seq, write right away
+                fwrite(in.payload, 1, in.h.len, fp);
+                next_seq++;
+
+                // TODO: flush through any buffered successors
+            } else if (seq > next_seq) {
+                // TODO: add to buffer
+            }
+
+            send_ctrl(ACK, 0, next_seq);
         } else if (type == SYN) {
             send_ctrl(SYNACK, 0, 0);
             printf("received SYN\n"); // debug
+
+            if (rstate == WAIT_SYN)
+                rstate = CONNECTED;
         } else if (type == FIN) {
             send_ctrl(FINACK, 0, 0);
-            fin = 1;
             printf("received FIN\n"); // debug
-        } else if (type == ACK) {
+            rstate = CLOSING;
+
+        } else if (type == ACK && rstate == CLOSING) {
             printf("received ACK\n"); // debug
-            if (fin) {
-                break;
-            }
+            break;
         }
     }
 
