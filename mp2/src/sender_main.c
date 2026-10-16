@@ -166,8 +166,8 @@ void reliablyTransfer(char* hostname, unsigned short int hostUDPport, char* file
     uint32_t base = 0; // start of window
     uint32_t next = 0; // current packet sent in window
 
-    uint32_t cwnd = 1;
-    uint32_t sst = 64;
+    double cwnd = 1;
+    double sst = 64;
     uint16_t dupack = 0;
     uint16_t state = SS;
 
@@ -195,6 +195,17 @@ void reliablyTransfer(char* hostname, unsigned short int hostUDPport, char* file
         
         if (ready == 0) {
             // TODO: timeout in any state transitions to slow start
+            sst = cwnd / 2;
+            if (sst < 2)
+                sst = 2;
+
+            cwnd = 1;
+            dupack = 0;
+            state = SS;
+            // retx cw_base
+            send_data(fp, base, bytesToTransfer);
+            timer_start = curr_ms();
+            continue;
         }
 
         // receive: receive ACKS, update state
@@ -212,11 +223,35 @@ void reliablyTransfer(char* hostname, unsigned short int hostUDPport, char* file
             dupack = 0;
             timer_start = curr_ms();
 
-            // TODO: state transitions
+            // state transitions
+            if (state == SS) {
+                cwnd++; // what if out of order? should stale acks be ignored or incr by difference?
+                if (cwnd >= sst) {
+                    state = CA;
+                }
+            } else if (state == CA) {
+                cwnd += 1.0 / (uint32_t)cwnd;
+                dupack = 0;
+            } else {
+                // FR -> CA
+                cwnd = sst;
+                state = CA;
+            }
         } else if (in.ack == base) {
             // dupACK
 
-            // TODO state transitions
+            if (state == FR) {
+                cwnd += 1;
+            } else if (++dupack == 3) {
+                sst = cwnd / 2;
+                if (sst < 2)
+                    sst = 2;
+                    
+                cwnd = sst + 3;
+                state = FR;
+                send_data(fp, base, bytesToTransfer);
+                timer_start = curr_ms();
+            }
         }
     }
 
