@@ -21,7 +21,7 @@ struct sockaddr_in si_me, si_other;
 int s, slen;
 
 static uint8_t buffer[RWND][MAX_PAYLOAD]; // buffered packet payload
-static uint16_t buf_len[RWND]; // buffered packet length
+static uint8_t buf_len[RWND]; // buffered packet length
 static uint8_t is_buffered[RWND]; // idx with seq % RWND, this gives O(1) buffer check
 
 static void send_ctrl(uint16_t type, uint32_t seq, uint32_t ack) {
@@ -95,18 +95,20 @@ void reliablyReceive(unsigned short int myUDPport, char* destinationFile) {
 
                 // flush through any buffered successors
                 while (is_buffered[next_seq % RWND]) {
-                    uint32_t slot = next_seq % RWND;
-                    fwrite(buffer[slot], 1, buf_len[slot], fp);
-                    is_buffered[slot] = 0;
+                    uint32_t idx = next_seq % RWND;
+                    fwrite(buffer[idx], 1, buf_len[idx], fp);
+
+                    is_buffered[idx] = 0;
                     next_seq++;
                 }
-            } else if (seq > next_seq && seq < next_seq + RWND) {
+            } else if (seq > next_seq) {
                 // add to buffer
-                uint32_t slot = seq % RWND;
-                if (!is_buffered[slot]) {
-                    memcpy(buffer[slot], in.payload, in.h.len);
-                    buf_len[slot] = in.h.len;
-                    is_buffered[slot] = 1;
+                uint32_t idx = seq % RWND;
+
+                if (!is_buffered[idx]) {
+                    memcpy(buffer[idx], in.payload, in.h.len);
+                    buf_len[idx] = in.h.len;
+                    is_buffered[idx] = 1;
                 }
             }
 
