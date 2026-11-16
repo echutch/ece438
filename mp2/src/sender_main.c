@@ -99,7 +99,7 @@ static void handshake(char teardown) {
 
             hdr_t in;
             ssize_t r = recvfrom(s, &in, sizeof(in), 0, NULL, NULL);
-            if (in.type == recv_ack) {
+            if (r >= sizeof(hdr_t) && in.type == recv_ack) {
                 printf("received SYN/FIN ACK\n"); // debug
                 send_ctrl(ACK, 0, 0);
                 return;
@@ -166,17 +166,18 @@ void reliablyTransfer(char* hostname, unsigned short int hostUDPport, char* file
     uint32_t base = 0; // start of window
     uint32_t next = 0; // current packet sent in window
 
-    double cwnd = 1;
-    double sst = 64;
+    uint32_t cwnd = 1;
+    uint32_t sst = 64;
     uint16_t dupack = 0;
     uint16_t state = SS;
+    uint32_t ca_count = 0;
 
     struct pollfd pfd = {.fd = s, .events = POLLIN};
     long timer_start = curr_ms();
 
     while (base < total_pkts) {
         // send: send cwnd packets - this will be acked by the receiving end
-        while (next < total_pkts && next < base + cwnd) {
+        while (next < total_pkts && next < base + cwnd && next - base < RWND) { // only send packets in the current window
             if (base == next){
                 timer_start = curr_ms();
             }
@@ -196,15 +197,18 @@ void reliablyTransfer(char* hostname, unsigned short int hostUDPport, char* file
         if (ready == 0) {
             // TODO: timeout in any state transitions to slow start
             sst = cwnd / 2;
-            if (sst < 2)
+            if (sst < 2) {
                 sst = 2;
+            }
 
             cwnd = 1;
-            dupack = 0;
             state = SS;
-            // retx cw_base
+            dupack = 0;
+            ca_count = 0;
+
             send_data(fp, base, bytesToTransfer);
             timer_start = curr_ms();
+            next = base + 1;
             continue;
         }
 
@@ -217,41 +221,63 @@ void reliablyTransfer(char* hostname, unsigned short int hostUDPport, char* file
         if (r < sizeof(in) || in.type != ACK)
             continue;
 
+        if (in.ack > next || in.ack > total_pkts) // validate ACK
+            continue;
+
         if (in.ack > base) {
             // new ACK
+            uint32_t newly_acked = in.ack - base; // if multiple packets ack'd
             base = in.ack;
             dupack = 0;
             timer_start = curr_ms();
 
-            // state transitions
+            // TODO: state transitions
+
+            // SS
             if (state == SS) {
-                cwnd++; // what if out of order? should stale acks be ignored or incr by difference?
+                cwnd += newly_acked;
                 if (cwnd >= sst) {
                     state = CA;
+                    ca_count = 0;
                 }
-            } else if (state == CA) {
-                cwnd += 1.0 / (uint32_t)cwnd;
-                dupack = 0;
-            } else {
-                // FR -> CA
-                cwnd = sst;
+            }
+            // FR
+            else if (state == FR) {
                 state = CA;
+                cwnd = sst;
+                ca_count = 0;
             }
-        } else if (in.ack == base) {
-            // dupACK
+            // CA
+            else if (state == CA) {
+                ca_count += newly_acked;
+                while (ca_count >= cwnd) {
+                    ca_count -= cwnd;
+                    cwnd++;
+                }
+            }
 
-            if (state == FR) {
-                cwnd += 1;
-            } else if (++dupack == 3) {
-                sst = cwnd / 2;
-                if (sst < 2)
-                    sst = 2;
-                    
-                cwnd = sst + 3;
-                state = FR;
-                send_data(fp, base, bytesToTransfer);
-                timer_start = curr_ms();
+        } else if (in.ack == base && base < next) {
+            // dupACK
+            if (state != FR) {
+                dupack++;
             }
+
+            if (dupack == 3 && state != FR) {
+                state = FR; // leave slow start when packet drops detected by dupACKs
+                
+                sst = cwnd / 2;
+                if (sst < 2) {
+                    sst = 2;
+                }
+                cwnd = sst + 3;
+                ca_count = 0;
+                send_data(fp, base, bytesToTransfer);
+            }
+            // TODO state transitions
+            else if (state == FR) {
+                cwnd++;
+            }
+
         }
     }
 
